@@ -1,0 +1,11 @@
+{
+  "name": "webhook-relay",
+  "version": "0.1.0",
+  "description": "Relay de webhooks: fila duravel (sqlite) + retry exponencial + DLQ + HMAC + painel",
+  "main": "server.js",
+  "type": "module",
+  "license": "MIT",
+  "author": "Rodolfo Franco (FrancosCorporation)",
+  "scripts": { "start": "node server.js", "test": "NODE_ENV=test node --test test/relay-test.mjs" },
+  "engines": { "node": ">=22.5.0" }
+}

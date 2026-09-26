@@ -1,6 +1,7 @@
 # Webhook Relay — Queue + Retry + DLQ for Local Automations
 
-![Status](https://img.shields.io/badge/status-em%20constru%C3%A7%C3%A3o-orange)
+![Status](https://img.shields.io/badge/M1-funcionando%20(6%2F6%20testes)-brightgreen)
+![CI](https://img.shields.io/badge/CI-test%20%2B%20license%20check-blue)
 ![Node](https://img.shields.io/badge/Node-%3E%3D18-green?logo=node.js&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -12,11 +13,23 @@ with replay and delivery metrics.
 > entrega com retry exponencial + DLQ, payloads assinados por HMAC, painel com replay
 > e métricas de entrega.
 
-## Features (roadmap)
+## Features
 
-- [ ] **M1a** — Ingest → queue → delivery with retry + DLQ
-- [ ] **M1b** — Admin panel (events, delivery status, replay) + HMAC signing
+- [x] **M1a** — Ingest → durable queue (SQLite) → delivery with exponential retry + DLQ (6/6 tests)
+- [x] **M1b** — Admin panel (events, delivery status, replay) + HMAC-SHA256 signing + metrics (taxa de entrega)
 - [ ] **M2** — Fan-out multi-destination, per-subscriber rate limits, p99 metrics
+
+## Quick start
+
+```bash
+docker compose up   # painel em http://localhost:3400
+```
+
+```bash
+# ingere um evento (idempotente por X-Event-Id)
+curl -X POST "http://localhost:3400/ingest?destino=http://localhost:3500/hook" \
+  -H "Content-Type: application/json" -H "X-Event-Id: evt-1" -d '{"pediu":"pizza"}'
+```
 
 ## Built with
 

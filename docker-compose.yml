@@ -1,0 +1,14 @@
+services:
+  relay:
+    build: .
+    ports:
+      - "3400:3400"
+    environment:
+      RELAY_SECRET: ${RELAY_SECRET:-troque-em-producao}
+      RELAY_DB: /data/relay.db
+    volumes:
+      - dados:/data
+    restart: unless-stopped
+
+volumes:
+  dados:
