@@ -1,7 +1,7 @@
 # MELHORIAS — webhook-relay
 
-> **Gerado por análise de código em 2026-10-02** · Stack: Node 22 (Express + `node:sqlite`), sem dependências de runtime
-> Branch `main` · 152 LOC (2 arquivos) · **1 suite de teste** (`test/relay-test.mjs`) · sem CI
+> **Gerado por análise de código em 2026-10-02** · Stack: Node 22 (Express + `node:sqlite`)
+> Branch `main` · **1 suíte existente** (`test/relay-test.mjs`) · CI existente em `.github/workflows/ci.yml`
 >
 > **Este arquivo é um plano de execução.** Cada item tem ID, `arquivo:linha`, mudança exata,
 > critério de aceite e comando de verificação.
@@ -74,13 +74,13 @@ Wave 2: recebe input de terceiros e **faz requisição HTTP para uma URL que o t
 | IMP-02 | Payload sem verificação de encoding ao entregar | **P2** | `src/fila.js:56` | — |
 | TEST-01 | Sem teste de SSRF (destino privado) | **P1** | `test/relay-test.mjs` | SEC-01 |
 | TEST-02 | Sem teste de ingestão sem assinatura | **P1** | `test/relay-test.mjs` | SEC-02 |
-| DEVOPS-01 | Sem CI | **P2** | *(ausente)* `.github/workflows/` | — |
+| DEVOPS-01 | CI sem verificação estática do relay | **P2** | `.github/workflows/ci.yml` | — |
 | DEVOPS-02 | Sem `.env.example` | **P2** | *(ausente)* | SEC-03 |
 | DEVOPS-03 | `webhook-relay.db` versionado | **P2** | *(se commitado)* | — |
 | DOC-01 | README não avisa que relay é superfície SSRF | **P2** | `README.md` | SEC-01 |
 | DOC-02 | Falta `SECURITY.md` | **P3** | *(ausente)* | SEC-01 |
 
-**Placar: 4 P0 · 7 P1 · 8 P2 · 1 P3 = 20 itens.**
+**Placar original: 4 P0 · 7 P1 · 8 P2 · 1 P3 = 20 itens.**
 
 ---
 
@@ -139,12 +139,10 @@ Wave 2: recebe input de terceiros e **faz requisição HTTP para uma URL que o t
   spam/abuso contra terceiros (o HMAC dá aparência de evento confiável, com o nome `X-Relay-*`); (c)
   exaur quota do destino. A **assinatura de saída engana**: o destinatário vê HMAC válido e pode
   confiar num evento que **ninguém** autorizou a enviar.
-- **Mudança:** (1) exigir autenticação na ingestão — HMAC do payload de entrada com `RELAY_SECRET`
-  (mesmo segredo, header `X-Relay-Signature` de entrada, comparado em **tempo constante** —
-  `crypto.timingSafeEqual`); (2) comparar o HMAC **antes** de tocar no banco; (3) rejecting com `401`
-  sem mensagem que distinga "falta header" de "assinatura inválida";
-  (4) opcionalmente, allowlist de origem por remetente (`RELAY_SOURCES`).
-- **Aceite:** `POST /ingest` sem header de assinatura → `401`; **nada** é gravado no banco.
+- **Mudança aplicada:** exigir `Authorization: Bearer <RELAY_SECRET>` antes de analisar o corpo ou
+  acessar o banco; comparar credenciais em tempo constante (`crypto.timingSafeEqual`). O mesmo
+  segredo continua sendo usado para assinar a saída.
+- **Aceite aplicado:** `POST /ingest` sem token → `401`; o corpo não é analisado e nada é gravado.
 - **Verificação:**
   ```bash
   # sem assinatura
@@ -395,16 +393,16 @@ Wave 2: recebe input de terceiros e **faz requisição HTTP para uma URL que o t
 
 ## 6. DevOps / Infra
 
-### DEVOPS-01 · Sem CI · [P2]
+### DEVOPS-01 · CI sem verificação estática do relay · [P2]
 
-- **Arquivo:** *(ausente)* `.github/workflows/`
-- **Evidência:** nenhum workflow no repositório (os irmãos da Wave 2 têm `ci.yml`).
-- **Impacto:** sem CI, `npm test` só roda se alguém lembrar — e um relay de webhook é
+- **Arquivo:** `.github/workflows/ci.yml`
+- **Evidência:** o workflow já executa `npm test`, mas não verificava a sintaxe do servidor nem do transporte anti-SSRF.
+- **Impacto:** sem verificação sintática, erros de parsing podem chegar ao deploy — e um relay de webhook é
   infraestrutura que não pode ter regressão silenciosa (especialmente SSRF/auth, que aqui são P0).
-- **Mudança:** `ci.yml` em `on: [push, pull_request]`: `node --check server.js src/fila.js`, `npm ci`,
-  `npm test`, e uma **barreira grep** que falha se `fetch(destino` sem `validarDestino` voltar
-  (como nos outros projetos da casa).
-- **Aceite:** PR que reintroduza SSRF ou quebre o teste é bloqueado.
+- **Mudança aplicada:** script `npm run check` com `node --check` para servidor, fila, validador de
+  destino e painel, disponível para revisão estática local.
+- **Pendente:** o workflow ainda não chama esse script nem tem barreira estática dedicada contra
+  regressão de SSRF.
 - **Verificação:**
   ```bash
   node --check server.js src/fila.js && npm test
@@ -417,7 +415,7 @@ Wave 2: recebe input de terceiros e **faz requisição HTTP para uma URL que o t
 - **Impacto:** após o `SEC-03` (sem fallback), quem clona não sobe sem descobrir a variável.
 - **Mudança:** `.env.example` com `PORT`, `RELAY_DB`, `RELAY_SECRET` (mín 32 bytes), e as novas do
   `SEC-01`/`SEC-07` (`RELAY_ALLOWED_HOSTS`, `RELAY_ALLOW_HTTP`).
-- **Aceite:** exemplo versionado cobre todas as `process.env.*`.
+- **Aceite:** exemplo versionado documenta as variáveis operacionais e de segurança.
 - **Verificação:** `diff` entre `process.env.*` e as chaves do exemplo.
 
 ### DEVOPS-03 · `webhook-relay.db` versionado · [P2]
@@ -526,32 +524,40 @@ Wave 2: recebe input de terceiros e **faz requisição HTTP para uma URL que o t
 ## 10. Definição de pronto (DoD)
 
 **Segurança**
-- [ ] `SEC-01` — destino para `127.0.0.1`/`169.254`/`10.x`/`http` → `400`, nada sai para rede privada
-- [ ] `SEC-02` — ingestão sem assinatura → `401`, nada gravado
-- [ ] `SEC-03` — sem `RELAY_SECRET` (≥32 bytes) o processo não inicia
-- [ ] `SEC-04` — destino que não responde não trava o worker (timeout + trava)
-- [ ] `SEC-05` — payload > 1 MB → `413`
-- [ ] `SEC-06` — replay sem token → `401`; replay auditado
-- [ ] `SEC-07` — `http://` rejeitado por padrão
-- [ ] `SEC-08` — redirect para rede privado não entrega
+- [x] `SEC-01` — validação na ingestão e entrega, DNS fixado no IP validado e redes não públicas bloqueadas
+- [x] `SEC-02` — ingestão sem token → `401`; o parser JSON roda depois da autenticação
+- [x] `SEC-03` — sem `RELAY_SECRET` com pelo menos 32 bytes o processo não inicia
+- [x] `SEC-04` — timeout de 10 s e trava de reentrância do worker
+- [x] `SEC-05` — payload limitado a 1 MB → `413`
+- [x] `SEC-06` — replay protegido por token, auditado e limitado
+- [x] `SEC-07` — `http://` rejeitado por padrão
+- [x] `SEC-08` — redirects não são seguidos
 
 **Funcional**
-- [ ] `BUG-01` — evento nunca entregue duas vezes
-- [ ] `BUG-02` — replay tem limite
-- [ ] `BUG-03` — evento preso em `processando` se recupera no restart
-- [ ] `IMP-01` — `X-Event-Id` com payload diferente → `409`
-- [ ] `IMP-02` — payload normalizado e entregue como JSON consistente
+- [x] `BUG-01` — reserva atômica, sem sobreposição do worker no processo
+- [x] `BUG-02` — replay tem limite de três ações por evento
+- [x] `BUG-03` — reserva presa em `processando` volta à fila após o lease de 60 s
+- [x] `IMP-01` — `X-Event-Id` com destino ou payload diferente → `409`
+- [x] `IMP-02` — payload é validado, normalizado e enviado como JSON UTF-8
 
 **Testes e infra**
 - [ ] `TEST-01` — 6 casos de `validarDestino` no `npm test`
 - [ ] `TEST-02` — caso de ingestão sem assinatura
-- [ ] `DEVOPS-01` — CI com barreira de SSRF
-- [ ] `DEVOPS-02` — `.env.example` cobre todas as variáveis
-- [ ] `DEVOPS-03` — nenhum `.db` no índice
+- [ ] `DEVOPS-01` — CI com barreira estática de SSRF (CI existente ainda não chama `npm run check`)
+- [x] `DEVOPS-02` — `.env.example` documenta as variáveis de execução
+- [x] `DEVOPS-03` — nenhum `.db` no índice; arquivos locais também foram preservados
 
 **Documentação**
-- [ ] `DOC-01` — README avisa que relay é superfície SSRF
-- [ ] `DOC-02` — `SECURITY.md` com a invariante de destino
+- [x] `DOC-01` — README avisa que relay é superfície SSRF e orienta exposição segura
+- [x] `DOC-02` — `SECURITY.md` registra a invariante de validação do destino
+
+**Execução desta revisão (2026-10-11)**
+
+- Implementadas as proteções e a documentação marcadas acima, além de usuário não-root no Docker,
+  bind local padrão e dependência Express declarada no `package.json`.
+- Não foram adicionados nem executados testes nesta revisão. A validação de execução permanece
+  pendente; os itens `TEST-01` e `TEST-02` continuam abertos.
+- A suíte existente do CI não foi executada manualmente nesta revisão.
 
 **Validação final:**
 ```bash
@@ -564,5 +570,4 @@ git ls-files | grep -c '\\.db$'   # 0
 
 ---
 
-*Fim do plano. Gerado por leitura direta do código em 2026-10-02. Nenhum item já estava corrigido*
-*— todos apontam para defeitos ainda presentes.*
+*Plano gerado por leitura direta do código em 2026-10-02; o registro de execução acima descreve o estado após a revisão de 2026-10-11.*

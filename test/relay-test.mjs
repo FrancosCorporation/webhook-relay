@@ -23,20 +23,19 @@ test('ingestão + idempotência por id externo', () => {
   assert.throws(() => fila.ingere({ payload: {} }));
 });
 
-test('entrega ok marca entregue (servidor alvo real)', async () => {
+test('entrega ok marca entregue (fetch simulado + HMAC)', async () => {
   const recebidos = [];
-  const alvo = createServer((req, res) => { recebidos.push(req.headers); res.writeHead(200); res.end(); });
-  await new Promise((r) => alvo.listen(0, r));
-  const porta = alvo.address().port;
-  fila.ingere({ destino: `http://localhost:${porta}/hook`, payload: { x: 1 }, idExterno: 'evt-ok' });
-  const r = await fila.tentarEntregar({ segredo: 'seg' });
+  const fetchOk = async (url, opts) => { recebidos.push(opts.headers); return { ok: true }; };
+  fila.ingere({ destino: 'https://relay-test.invalid/hook', payload: { x: 1 }, idExterno: 'evt-ok' });
+  const r = await fila.tentarEntregar({ segredo: 'seg', fetchImpl: fetchOk });
   // a fila é compartilhada entre testes: filtra pelo MEU evento
   const meu = r.find((x) => x.id === 'evt-ok');
   assert.equal(meu.ok, true);
-  assert.equal(recebidos.length, 1);
-  assert.ok(recebidos[0]['x-relay-signature']); // HMAC presente
-  assert.equal(recebidos[0]['x-relay-event-id'], 'evt-ok');
-  alvo.close();
+  // a fila é compartilhada: outros pendentes podem ter sido entregues juntos —
+  // filtra pelos headers do MEU evento
+  const meus = recebidos.filter((h) => h['X-Relay-Event-Id'] === 'evt-ok');
+  assert.equal(meus.length, 1);
+  assert.ok(meus[0]['X-Relay-Signature']); // HMAC presente
 });
 
 test('HMAC: assinatura determinística e verificável', () => {
@@ -48,25 +47,49 @@ test('HMAC: assinatura determinística e verificável', () => {
 });
 
 test('falha -> retry -> DLQ após 5 tentativas (alvo caindo)', async () => {
-  const alvo = createServer((req, res) => { res.writeHead(500); res.end(); });
-  await new Promise((r) => alvo.listen(0, r));
-  const porta = alvo.address().port;
-  fila.ingere({ destino: `http://localhost:${porta}/hook`, payload: { x: 2 }, idExterno: 'evt-fail' });
+  // destino público fictício; o anti-SSRF bloqueia 127.0.0.1/localhost,
+  // então este teste usa fetchImpl simulado em vez de rede real
+  fila.ingere({ destino: 'https://relay-test.invalid/hook', payload: { x: 2 }, idExterno: 'evt-fail' });
+  const fetch500 = async () => ({ ok: false, status: 500 });
   // primeira tentativa: falha, volta pra pendente
-  const r1 = await fila.tentarEntregar({ segredo: 's' });
+  const r1 = await fila.tentarEntregar({ segredo: 's', fetchImpl: fetch500 });
   const meu1 = r1.find((x) => x.id === 'evt-fail');
   assert.equal(meu1.ok, false);
   assert.equal(meu1.dlq, false);
   // força 4 tentativas restantes de uma vez (sem esperar backoff real: bypass manual)
   const ev = fila.db.prepare("SELECT id FROM eventos WHERE id = 'evt-fail'").get();
   for (let i = 0; i < 3; i++) fila.db.prepare("UPDATE eventos SET tentativas = ? WHERE id = ?").run(i + 2, ev.id);
-  const r2 = await fila.tentarEntregar({ segredo: 's' });
+  const r2 = await fila.tentarEntregar({ segredo: 's', fetchImpl: fetch500 });
   const meu2 = r2.find((x) => x.id === 'evt-fail');
   assert.equal(meu2.tentativas, 5);
   assert.equal(meu2.dlq, true);
   const metricas = fila.metricas();
-  assert.equal(metricas.dlq, 1);
-  alvo.close();
+  assert.ok(metricas.dlq >= 1);
+});
+
+test('C6: destino interno vai direto para DLQ sem fetch (anti-SSRF)', async () => {
+  const chamadasBloqueadas = [];
+  const fetchSpy = async (url) => { chamadasBloqueadas.push(url); return { ok: true }; };
+  for (const [id, dest] of [
+    ['ssrf-1', 'http://169.254.169.254/latest/meta-data/'],
+    ['ssrf-2', 'http://localhost:8080/hook'],
+    ['ssrf-3', 'http://192.168.1.1/hook'],
+    ['ssrf-4', 'ftp://x.invalid/f'],
+  ]) {
+    fila.ingere({ destino: dest, payload: { x: 1 }, idExterno: id });
+  }
+  const r = await fila.tentarEntregar({ segredo: 's', fetchImpl: fetchSpy });
+  for (const id of ['ssrf-1', 'ssrf-2', 'ssrf-3', 'ssrf-4']) {
+    const meu = r.find((x) => x.id === id);
+    assert.equal(meu.ok, false, id);
+    assert.equal(meu.dlq, true, id);
+    assert.match(meu.erro, /SSRF/, id);
+  }
+  // nenhum fetch para destino interno (a fila é compartilhada: outros testes
+  // podem ter pendentes legítimos — filtra só pelos destinos bloqueados)
+  for (const u of chamadasBloqueadas) {
+    assert.ok(!/169\.254|localhost|192\.168|^ftp:/.test(u), `fetch bloqueado chamado: ${u}`);
+  }
 });
 
 test('replay de DLQ volta para pendente', () => {

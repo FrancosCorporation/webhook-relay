@@ -2,13 +2,21 @@ services:
   relay:
     build: .
     ports:
-      - "3400:3400"
+      - "127.0.0.1:3400:3400"
     environment:
-      RELAY_SECRET: ${RELAY_SECRET:-troque-em-producao}
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3400
+      RELAY_SECRET: ${RELAY_SECRET:?configure um RELAY_SECRET com pelo menos 32 bytes no .env}
       RELAY_DB: /data/relay.db
+      RELAY_ALLOW_HTTP: ${RELAY_ALLOW_HTTP:-0}
+      RELAY_ALLOWED_HOSTS: ${RELAY_ALLOWED_HOSTS:-}
+      RELAY_TRUST_PROXY: ${RELAY_TRUST_PROXY:-0}
     volumes:
       - dados:/data
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   dados:
