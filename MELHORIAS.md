@@ -543,7 +543,7 @@ Wave 2: recebe input de terceiros e **faz requisição HTTP para uma URL que o t
 **Testes e infra**
 - [ ] `TEST-01` — 6 casos de `validarDestino` no `npm test`
 - [ ] `TEST-02` — caso de ingestão sem assinatura
-- [ ] `DEVOPS-01` — CI com barreira estática de SSRF (CI existente ainda não chama `npm run check`)
+- [x] `DEVOPS-01` — CI executa `npm run check` antes da suíte existente
 - [x] `DEVOPS-02` — `.env.example` documenta as variáveis de execução
 - [x] `DEVOPS-03` — nenhum `.db` no índice; arquivos locais também foram preservados
 
@@ -555,6 +555,7 @@ Wave 2: recebe input de terceiros e **faz requisição HTTP para uma URL que o t
 
 - Implementadas as proteções e a documentação marcadas acima, além de usuário não-root no Docker,
   bind local padrão e dependência Express declarada no `package.json`.
+- O workflow agora executa `npm run check` como barreira estática antes dos testes existentes.
 - Não foram adicionados nem executados testes nesta revisão. A validação de execução permanece
   pendente; os itens `TEST-01` e `TEST-02` continuam abertos.
 - A suíte existente do CI não foi executada manualmente nesta revisão.

@@ -13,6 +13,8 @@ jobs:
         with:
           node-version: 22
       - run: npm install
+      - name: Verificação estática
+        run: npm run check
       - run: npm test
       - name: Scan de licenças
         run: npx license-checker --production --failOn "AGPL;GPL;LGPL;CC-BY-NC" || (echo "LICENÇA INCOMPATÍVEL" && exit 1)
