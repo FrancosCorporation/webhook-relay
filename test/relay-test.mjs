@@ -68,23 +68,33 @@ test('falha -> retry -> DLQ após 5 tentativas (alvo caindo)', async () => {
 });
 
 test('C6: destino interno vai direto para DLQ sem fetch (anti-SSRF)', async () => {
+  // RELAY_ALLOW_HTTP=1 libera o caminho http para o teste atingir a camada
+  // anti-SSRF (sem isso a validação para no protocolo). O default de
+  // destino.js lê process.env a cada chamada, então basta setar antes.
+  process.env.RELAY_ALLOW_HTTP = '1';
   const chamadasBloqueadas = [];
   const fetchSpy = async (url) => { chamadasBloqueadas.push(url); return { ok: true }; };
   for (const [id, dest] of [
     ['ssrf-1', 'http://169.254.169.254/latest/meta-data/'],
     ['ssrf-2', 'http://localhost:8080/hook'],
     ['ssrf-3', 'http://192.168.1.1/hook'],
+    // ssrf-4 é rejeitado já na camada de protocolo (não-HTTPS) — a asserção
+    // de mensagem específica é feita abaixo, separada dos casos SSRF.
     ['ssrf-4', 'ftp://x.invalid/f'],
   ]) {
     fila.ingere({ destino: dest, payload: { x: 1 }, idExterno: id });
   }
   const r = await fila.tentarEntregar({ segredo: 's', fetchImpl: fetchSpy });
-  for (const id of ['ssrf-1', 'ssrf-2', 'ssrf-3', 'ssrf-4']) {
+  for (const id of ['ssrf-1', 'ssrf-2', 'ssrf-3']) {
     const meu = r.find((x) => x.id === id);
     assert.equal(meu.ok, false, id);
     assert.equal(meu.dlq, true, id);
     assert.match(meu.erro, /SSRF/, id);
   }
+  const ftp = r.find((x) => x.id === 'ssrf-4');
+  assert.equal(ftp.ok, false, 'ssrf-4');
+  assert.equal(ftp.dlq, true, 'ssrf-4');
+  assert.match(ftp.erro, /HTTPS/, 'ssrf-4');
   // nenhum fetch para destino interno (a fila é compartilhada: outros testes
   // podem ter pendentes legítimos — filtra só pelos destinos bloqueados)
   for (const u of chamadasBloqueadas) {
