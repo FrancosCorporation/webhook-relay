@@ -137,7 +137,12 @@ export function criarFila(caminhoDb = 'webhook-relay.db') {
         let timer;
         try {
           try { validarDestino(ev.destino); }
-          catch (erro) { throw new Error(`destino bloqueado (SSRF ou protocolo inseguro): ${erro.message}`); }
+          catch (erro) {
+            throw Object.assign(
+              new Error(`destino bloqueado (SSRF ou protocolo inseguro): ${erro.message}`),
+              { codigo: 'destino_invalido' }
+            );
+          }
 
           const ctrl = new AbortController();
           timer = setTimeout(() => ctrl.abort(), 10_000);
@@ -157,7 +162,9 @@ export function criarFila(caminhoDb = 'webhook-relay.db') {
           marcar.run('entregue', tentativas, ev.id);
           resultados.push({ id: ev.id, ok: true, tentativas });
         } catch (erro) {
-          const proximoStatus = tentativas >= 5 ? 'dlq' : 'pendente';
+          // Destino inválido (SSRF/protocolo) não pode ter sucesso em retry:
+          // vai direto para a DLQ. Falhas transitórias seguem o backoff.
+          const proximoStatus = erro.codigo === 'destino_invalido' || tentativas >= 5 ? 'dlq' : 'pendente';
           marcar.run(proximoStatus, tentativas, ev.id);
           resultados.push({ id: ev.id, ok: false, tentativas, erro: erro.message, dlq: proximoStatus === 'dlq' });
           if (proximoStatus === 'pendente') {
