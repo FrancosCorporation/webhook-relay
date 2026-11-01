@@ -14,5 +14,10 @@
   "dependencies": {
     "express": "^5.1.0"
   },
-  "engines": { "node": ">=22.5.0" }
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "overrides": {
+    "body-parser": "^2.4.0"
+  }
 }
